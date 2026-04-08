@@ -21,27 +21,16 @@ find_package(MPI REQUIRED)
 message(STATUS "MPI CXX compile flags: ${MPI_CXX_COMPILE_OPTIONS} ${MPI_CXX_COMPILE_DEFINITIONS}")
 message(STATUS "MPI CXX include path: ${MPI_CXX_INCLUDE_DIRS}")
 
-# Ensure vendored json header exists (download if missing)
+# Require vendored json header to be present in the repository (no auto-download)
 set(VENDORED_JSON_DIR ${CMAKE_CURRENT_SOURCE_DIR}/include/json_header/nlohmann)
 set(VENDORED_JSON ${VENDORED_JSON_DIR}/json.hpp)
-if (NOT EXISTS ${VENDORED_JSON})
-  message(STATUS "Vendored nlohmann/json.hpp not found. Attempting to download...")
-  file(MAKE_DIRECTORY ${VENDORED_JSON_DIR})
-  file(DOWNLOAD
-    https://raw.githubusercontent.com/nlohmann/json/develop/single_include/nlohmann/json.hpp
-    ${VENDORED_JSON}
-    SHOW_PROGRESS
-    STATUS dl_status
-    TLS_VERIFY ON)
-  list(GET dl_status 0 dl_code)
-  if (NOT dl_code EQUAL 0)
-    message(WARNING "Failed to download nlohmann/json.hpp automatically. You can place it manually at: ${VENDORED_JSON}")
-  else()
-    message(STATUS "Downloaded nlohmann/json.hpp into ${VENDORED_JSON}")
-  endif()
+if (EXISTS ${VENDORED_JSON})
+  message(STATUS "Found vendored nlohmann/json.hpp at: ${VENDORED_JSON}")
+else()
+  message(FATAL_ERROR "Vendored nlohmann/json.hpp not found at: ${VENDORED_JSON}. Please add it to the repo as agreed.")
 endif()
 
-add_executable(ngs_mpi src/main.cpp)
+add_executable(ngs_mpi src/main.cpp src/loaders.cpp)
 
 target_include_directories(ngs_mpi
   PRIVATE
