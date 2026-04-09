@@ -7,10 +7,32 @@
 #include <chrono>
 #include <iomanip>
 #include <filesystem>
+#include <unordered_map>
+#include <limits>
+#include <queue>
+#include <cmath>
 
 #include "../include/graph.hpp"
 
 namespace fs = std::filesystem;
+
+#include <json_header/nlohmann/json.hpp>
+using nlohmann::json;
+
+static std::string read_seed_from_graph_manifest() {
+    // Best-effort: read outputs/graph.manifest.json and return the 'seed' as string; empty if missing
+    std::ifstream is("outputs/graph.manifest.json");
+    if (!is) return std::string();
+    try {
+        json j; is >> j;
+        if (j.contains("seed") && !j.at("seed").is_null()) {
+            return j.at("seed").get<std::string>();
+        }
+    } catch (...) {
+        return std::string();
+    }
+    return std::string();
+}
 
 struct CmdArgs {
     std::string graphPath;
@@ -21,6 +43,38 @@ struct CmdArgs {
     std::string logDir = "outputs/";
     bool verbose = false;
 };
+
+static void write_run_manifest(const std::string& algo,
+                               const CmdArgs& args,
+                               int world_size,
+                               const std::string& start_time,
+                               const std::string& end_time,
+                               long long runtime_ms,
+                               const std::string& seed) {
+    std::string file = args.logDir;
+    if (!file.empty() && file.back() != '/' && file.back() != '\\') file += "/";
+    file += "run_manifest.json";
+    fs::create_directories(args.logDir);
+
+    // Best-effort: compute simple sizes instead of SHA-256 to avoid extra deps
+    auto file_size_or_neg = [](const std::string& p)->long long {
+        std::error_code ec; auto sz = fs::file_size(p, ec); return ec ? -1LL : static_cast<long long>(sz);
+    };
+
+    std::ofstream os(file, std::ios::trunc);
+    os << "{\n";
+    os << "  \"algo\": \"" << algo << "\",\n";
+    os << "  \"ranks\": " << world_size << ",\n";
+    os << "  \"graph_path\": \"" << args.graphPath << "\",\n";
+    os << "  \"part_path\": \"" << args.partPath << "\",\n";
+    os << "  \"start_time\": \"" << start_time << "\",\n";
+    os << "  \"end_time\": \"" << end_time << "\",\n";
+    os << "  \"runtime_ms\": " << runtime_ms << ",\n";
+    os << "  \"seed\": \"" << seed << "\",\n";
+    os << "  \"graph_size_bytes\": " << file_size_or_neg(args.graphPath) << ",\n";
+    os << "  \"part_size_bytes\": " << file_size_or_neg(args.partPath) << "\n";
+    os << "}\n";
+}
 
 static void print_help(int rank) {
     if (rank == 0) {
@@ -97,7 +151,10 @@ static void write_summary_json(const std::string& algo,
                                long bytes,
                                long long runtime_ms,
                                const std::string& start_time,
-                               const std::string& end_time) {
+                               const std::string& end_time,
+                               const std::string& seed,
+                               const std::string& extra_json,
+                               const std::string& histogram_json) {
     // Rank 0 writes: outputs/summary_<algo>.json under args.logDir
     std::string file = args.logDir;
     if (!file.empty() && file.back() != '/' && file.back() != '\\') file += "/";
@@ -115,11 +172,20 @@ static void write_summary_json(const std::string& algo,
     os << "  \"runtime_ms\": " << runtime_ms << ",\n";
     os << "  \"start_time\": \"" << start_time << "\",\n";
     os << "  \"end_time\": \"" << end_time << "\",\n";
+    os << "  \"seed\": \"" << seed << "\",\n";
+    if (!extra_json.empty()) {
+        os << "  \"result\": " << extra_json << ",\n";
+    }
+    if (!histogram_json.empty()) {
+        os << "  \"distance_histogram\": " << histogram_json << ",\n";
+    }
     os << "  \"args\": { \"rounds\": " << args.rounds << ", \"source\": " << args.source << ", \"verbose\": " << (args.verbose?1:0) << " }\n";
     os << "}\n";
 }
 
 int main(int argc, char** argv) {
+    std::string summary_extra_json;
+    std::string histogram_json; // optional: distance histogram for dijkstra
     MPI_Init(&argc, &argv);
 
     int world_rank = -1;
@@ -190,6 +256,11 @@ int main(int argc, char** argv) {
             oss << "Elected leader id=" << global_max << ", owned_nodes=" << rv.owned_nodes.size();
             rank_log(args.logDir, world_rank, "leader", oss.str());
 
+            if (world_rank == 0) {
+                // include leader id in the summary 'result' field for tests
+                std::ostringstream rj; rj << "{\"leader\":" << global_max << "}";
+                summary_extra_json = rj.str();
+            }
             if (world_rank == 0 && args.verbose) {
                 std::cout << "[leader] Elected leader id=" << global_max << std::endl;
             }
@@ -215,12 +286,229 @@ int main(int argc, char** argv) {
                << "; owned=" << rv.owned_nodes.size() << ", ghosts=" << rv.ghosts.size();
             rank_log(args.logDir, world_rank, "dijkstra", ss.str());
 
-            // TODO: Implement distributed Dijkstra core loop here (global min selection, relaxations).
-            // For now, leave counters at zero to validate loaders and logging path.
-            iterations = 0; messages = 0; bytes = 0;
+            // Distributed Dijkstra (global-min baseline)
+            const double INF = std::numeric_limits<double>::infinity();
+            std::unordered_map<int,double> dist;          // tentative distances for nodes we learn about
+            std::unordered_map<int,bool> settled;         // settled flags for owned nodes
+
+            // Min-heap for owned unsettled nodes (dist, node)
+            using PQItem = std::pair<double,int>;
+            struct Cmp { bool operator()(const PQItem& a, const PQItem& b) const { return a.first > b.first; } };
+            std::priority_queue<PQItem, std::vector<PQItem>, Cmp> pq;
+
+            auto getdist = [&](int id)->double {
+                auto it = dist.find(id); return it==dist.end()? INF : it->second;
+            };
+            auto setdist = [&](int id, double d){ dist[id] = d; };
+            auto owner_of = [&](int id)->int {
+                auto it = pd.owner_of.find(id); return (it==pd.owner_of.end()? -1 : it->second);
+            };
+
+            // Initialize source
+            int src_owner = owner_of(args.source);
+            if (src_owner < 0) {
+                if (world_rank == 0) std::cerr << "Source node not present in owner map: " << args.source << std::endl;
+                MPI_Abort(MPI_COMM_WORLD, 5);
+            }
+            if (world_rank == src_owner) {
+                setdist(args.source, 0.0);
+                pq.push({0.0, args.source});
+            }
+
+            long iters = 0;
+            long msg = 0;
+            long by = 0;
+
+            // Iteration loop
+            while (true) {
+                // 1) Each rank proposes its best local candidate
+                double my_best_d = INF;
+                int my_best_node = -1;
+                int my_best_owner = -1;
+                while (!pq.empty()) {
+                    auto top = pq.top();
+                    double d = top.first; int u = top.second;
+                    if (settled[u]) { pq.pop(); continue; }
+                    my_best_d = d; my_best_node = u; my_best_owner = owner_of(u);
+                    break;
+                }
+
+                // 2) Gather proposals to rank 0
+                std::vector<double> all_d; std::vector<int> all_n; std::vector<int> all_o;
+                if (world_rank == 0) {
+                    all_d.resize(world_size, INF);
+                    all_n.resize(world_size, -1);
+                    all_o.resize(world_size, -1);
+                }
+                double send_d = my_best_d;
+                int send_n = my_best_node;
+                int send_o = my_best_owner;
+                MPI_Gather(&send_d, 1, MPI_DOUBLE, all_d.data(), 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+                MPI_Gather(&send_n, 1, MPI_INT,    all_n.data(), 1, MPI_INT,    0, MPI_COMM_WORLD);
+                MPI_Gather(&send_o, 1, MPI_INT,    all_o.data(), 1, MPI_INT,    0, MPI_COMM_WORLD);
+                msg += 3; by += static_cast<long>(world_size*sizeof(double) + 2*world_size*sizeof(int));
+
+                // 3) Rank 0 selects global min and broadcasts choice
+                double sel_d = INF; int sel_node = -1; int sel_owner = -1;
+                if (world_rank == 0) {
+                    for (int r = 0; r < world_size; ++r) {
+                        if (all_n[r] >= 0 && all_d[r] < sel_d) {
+                            sel_d = all_d[r]; sel_node = all_n[r]; sel_owner = all_o[r];
+                        }
+                    }
+                }
+                MPI_Bcast(&sel_d, 1, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+                MPI_Bcast(&sel_node, 1, MPI_INT, 0, MPI_COMM_WORLD);
+                MPI_Bcast(&sel_owner, 1, MPI_INT, 0, MPI_COMM_WORLD);
+                msg += 3; by += static_cast<long>(sizeof(double) + 2*sizeof(int));
+
+                // Termination if no candidate remains
+                if (sel_node < 0 || sel_d == INF) {
+                    break;
+                }
+
+                // 4) Owning rank settles node and relaxes its outgoing edges
+                std::vector<int> upd_ids; std::vector<double> upd_dists;
+                if (world_rank == sel_owner) {
+                    settled[sel_node] = true;
+                    // Remove top if matches; cleanup handled lazily above
+                    auto it_idx = gd.id_to_idx.find(sel_node);
+                    if (it_idx != gd.id_to_idx.end()) {
+                        int idx = it_idx->second;
+                        const auto& outs = gd.adj[idx];
+                        for (const auto& e : outs) {
+                            int v = e.to; double nd = sel_d + e.cost;
+                            double prev = getdist(v);
+                            if (nd + 1e-12 < prev) {
+                                setdist(v, nd);
+                                if (owner_of(v) == world_rank && !settled[v]) {
+                                    pq.push({nd, v});
+                                }
+                                upd_ids.push_back(v);
+                                upd_dists.push_back(nd);
+                            }
+                        }
+                    }
+                }
+
+                // 5) Broadcast updates from owning rank to all
+                int upd_count = static_cast<int>(upd_ids.size());
+                MPI_Bcast(&upd_count, 1, MPI_INT, sel_owner, MPI_COMM_WORLD);
+                msg += 1; by += static_cast<long>(sizeof(int));
+                if (upd_count > 0) {
+                    if (world_rank != sel_owner) {
+                        upd_ids.resize(upd_count);
+                        upd_dists.resize(upd_count);
+                    }
+                    MPI_Bcast(upd_ids.data(), upd_count, MPI_INT, sel_owner, MPI_COMM_WORLD);
+                    MPI_Bcast(upd_dists.data(), upd_count, MPI_DOUBLE, sel_owner, MPI_COMM_WORLD);
+                    msg += 2; by += static_cast<long>(upd_count*sizeof(int) + upd_count*sizeof(double));
+                }
+
+                // Apply updates locally (all ranks)
+                for (int i = 0; i < (int)upd_ids.size(); ++i) {
+                    int v = upd_ids[i]; double nd = upd_dists[i];
+                    double prev = getdist(v);
+                    if (nd + 1e-12 < prev) {
+                        setdist(v, nd);
+                        if (owner_of(v) == world_rank && !settled[v]) {
+                            pq.push({nd, v});
+                        }
+                    }
+                }
+
+                ++iters;
+                if (args.verbose && world_rank == 0 && (iters % 10 == 0)) {
+                    std::cout << "[dijkstra] iter=" << iters << ", sel_node=" << sel_node << ", sel_d=" << sel_d << std::endl;
+                }
+            }
+
+            // After Dijkstra loop: gather final distances to rank 0 and build histogram
+            {
+                // Build local dense vector over known node ids (index by gd.id_to_idx)
+                const int N = static_cast<int>(gd.node_ids.size());
+                const double INF = std::numeric_limits<double>::infinity();
+                std::vector<double> localD(N, INF);
+                for (const auto &kv : gd.id_to_idx) {
+                    int id = kv.first; int idx = kv.second;
+                    auto it = dist.find(id);
+                    if (it != dist.end()) localD[idx] = it->second;
+                }
+                std::vector<double> globalD(N, INF);
+                MPI_Allreduce(localD.data(), globalD.data(), N, MPI_DOUBLE, MPI_MIN, MPI_COMM_WORLD);
+                msg += 1; by += static_cast<long>(N * sizeof(double));
+
+                if (world_rank == 0) {
+                    // Build a result.dist_map {"id": dist}
+                    std::ostringstream rj;
+                    rj << "{\"source\":" << args.source << ",\"dist_map\":{";
+                    for (size_t i = 0; i < gd.node_ids.size(); ++i) {
+                        int id = gd.node_ids[i];
+                        double d = globalD[gd.id_to_idx.at(id)];
+                        if (i > 0) rj << ",";
+                        // Emit integers without trailing .0 when close to integer
+                        rj << "\"" << id << "\":" << std::setprecision(15) << d;
+                    }
+                    rj << "}}";
+                    summary_extra_json = rj.str();
+
+                    // Build fixed-width 10-bin histogram over finite distances
+                    std::vector<double> vals;
+                    vals.reserve(gd.node_ids.size());
+                    for (size_t i = 0; i < gd.node_ids.size(); ++i) {
+                        double d = globalD[i];
+                        if (std::isfinite(d)) vals.push_back(d);
+                    }
+                    if (!vals.empty()) {
+                        double minv = vals[0], maxv = vals[0];
+                        for (double v : vals) { if (v < minv) minv = v; if (v > maxv) maxv = v; }
+                        int buckets = 10;
+                        std::vector<long> counts(buckets, 0);
+                        if (maxv == minv) {
+                            // all zero or same value: put all into last bin
+                            counts[buckets-1] = static_cast<long>(vals.size());
+                        } else {
+                            double width = (maxv - minv) / buckets;
+                            for (double v : vals) {
+                                int b = static_cast<int>(std::floor((v - minv) / width));
+                                if (b >= buckets) b = buckets - 1;
+                                if (b < 0) b = 0;
+                                counts[b]++;
+                            }
+                        }
+                        std::ostringstream hj;
+                        hj << "{\"bins\":[";
+                        double width = (maxv == minv ? 1.0 : (maxv - minv) / buckets);
+                        for (int i = 0; i < buckets; ++i) {
+                            if (i > 0) hj << ",";
+                            double le = minv + width * (i + 1);
+                            hj << "{\"le\":" << std::setprecision(15) << le << ",\"count\":" << counts[i] << "}";
+                        }
+                        hj << "],\"min\":" << std::setprecision(15) << minv
+                           << ",\"max\":" << std::setprecision(15) << maxv
+                           << ",\"total\":" << vals.size()
+                           << ",\"bucket_scheme\":\"fixed_width\",\"bucket_count\":" << buckets << "}";
+                        histogram_json = hj.str();
+                    } else {
+                        histogram_json.clear();
+                    }
+
+                    // Expose iterations/messages/bytes from local counters
+                    iterations = iters;
+                    messages = msg;
+                    bytes = by;
+
+                    if (args.verbose) {
+                        std::cout << "[dijkstra] finished: iters=" << iterations
+                                  << ", messages=" << messages
+                                  << ", bytes=" << bytes << std::endl;
+                    }
+                }
+            }
+            rank_log(args.logDir, world_rank, "dijkstra", "Finished distributed Dijkstra (global-min baseline)");
         } catch (const std::exception& ex) {
-            if (world_rank == 0) std::cerr << "Dijkstra setup failed: " << ex.what() << std::endl;
-            MPI_Abort(MPI_COMM_WORLD, 4);
+            if (world_rank == 0) std::cerr << "Dijkstra failed: " << ex.what() << std::endl;
+            MPI_Abort(MPI_COMM_WORLD, 7);
         }
     } else {
         if (world_rank == 0) {
@@ -229,15 +517,17 @@ int main(int argc, char** argv) {
         MPI_Abort(MPI_COMM_WORLD, 2);
     }
 
-    MPI_Barrier(MPI_COMM_WORLD);
-
+    // Timing end and summaries (rank 0)
     auto t1 = std::chrono::steady_clock::now();
-    auto runtime_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
+    long long runtime_ms = std::chrono::duration_cast<std::chrono::milliseconds>(t1 - t0).count();
     std::string end_str = now_iso8601();
+    std::string seed = read_seed_from_graph_manifest();
 
     if (world_rank == 0) {
-        write_summary_json(args.algo, args, world_size, iterations, messages, bytes, runtime_ms, start_str, end_str);
-        std::cout << "ngs_mpi finished (" << args.algo << ") in " << runtime_ms << " ms" << std::endl;
+        const std::string algo_name = args.algo;
+        const std::string hist = (algo_name == "dijkstra" ? histogram_json : std::string());
+        write_summary_json(algo_name, args, world_size, iterations, messages, bytes, runtime_ms, start_str, end_str, seed, summary_extra_json, hist);
+        write_run_manifest(algo_name, args, world_size, start_str, end_str, runtime_ms, seed);
     }
 
     MPI_Finalize();

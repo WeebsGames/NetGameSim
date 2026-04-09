@@ -1,0 +1,3 @@
+/mnt/e/GitHub/NetGameSim/build_wsl/CMakeFiles/ngs_mpi.dir
+/mnt/e/GitHub/NetGameSim/build_wsl/CMakeFiles/edit_cache.dir
+/mnt/e/GitHub/NetGameSim/build_wsl/CMakeFiles/rebuild_cache.dir

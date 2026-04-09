@@ -1,0 +1,14 @@
+{
+  "algo": "dijkstra",
+  "ranks": 4,
+  "graph_path": "/mnt/e/GitHub/NetGameSim/outputs/graph.json",
+  "part_path": "/mnt/e/GitHub/NetGameSim/outputs/part.json",
+  "iterations": 6,
+  "messages_sent": 56,
+  "bytes_sent": 644,
+  "runtime_ms": 8,
+  "start_time": "2026-04-09T07:21:55.395Z",
+  "end_time": "2026-04-09T07:21:55.404Z",
+  "seed": "",
+  "args": { "rounds": 0, "source": 0, "verbose": 0 }
+}

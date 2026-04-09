@@ -1,0 +1,15 @@
+{
+  "algo": "leader",
+  "ranks": 4,
+  "graph_path": "/mnt/e/GitHub/NetGameSim/outputs/graph.json",
+  "part_path": "/mnt/e/GitHub/NetGameSim/outputs/part.json",
+  "iterations": 1,
+  "messages_sent": 2,
+  "bytes_sent": 8,
+  "runtime_ms": 9,
+  "start_time": "2026-04-09T07:21:41.875Z",
+  "end_time": "2026-04-09T07:21:41.884Z",
+  "seed": "",
+  "result": {"leader":5},
+  "args": { "rounds": 200, "source": 0, "verbose": 0 }
+}

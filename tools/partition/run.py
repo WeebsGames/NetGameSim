@@ -3,6 +3,7 @@ import json
 import argparse
 import datetime
 from collections import defaultdict
+from typing import Tuple
 
 
 def contiguous_owner(node_id: int, total_nodes: int, ranks: int) -> int:
@@ -14,18 +15,50 @@ def contiguous_owner(node_id: int, total_nodes: int, ranks: int) -> int:
     return min(node_id // block, ranks - 1)
 
 
+def _parse_two_arrays(text: str) -> Tuple[list, list]:
+    """
+    Parse a file that contains exactly two top-level JSON arrays back-to-back
+    (optionally with whitespace/newlines between/around them). Works for both
+    single-line and pretty-printed multi-line inputs.
+    """
+    # Strip UTF-8 BOM if present
+    if text and text[0] == "\ufeff":
+        text = text.lstrip("\ufeff")
+    dec = json.JSONDecoder()
+    i = 0
+    n = len(text)
+    # skip leading whitespace
+    while i < n and text[i].isspace():
+        i += 1
+    if i >= n:
+        raise SystemExit("Graph JSON is empty; expected two arrays: nodes then edges")
+    arr1, idx1 = dec.raw_decode(text, i)
+    i = idx1
+    # skip whitespace between arrays
+    while i < n and text[i].isspace():
+        i += 1
+    if i >= n:
+        raise SystemExit("Graph JSON contains only one JSON value; expected two arrays (nodes then edges)")
+    arr2, idx2 = dec.raw_decode(text, i)
+    # Optional trailing whitespace allowed
+    return arr1, arr2
+
+
 def main():
     p = argparse.ArgumentParser(description="Partition graph nodes across MPI ranks")
-    p.add_argument("graph", help="Path to graph JSON (two-line JSON: nodes then edges)")
+    p.add_argument("graph", help="Path to graph JSON (two arrays: nodes then edges; multi-line OK)")
     p.add_argument("--ranks", type=int, required=True, help="Number of MPI ranks")
     p.add_argument("--out", required=True, help="Output partition JSON path")
     args = p.parse_args()
 
+    # Read entire file to support pretty-printed multi-line arrays
     with open(args.graph, "r", encoding="utf-8") as f:
-        nodes_line = f.readline()
-        edges_line = f.readline()
-    nodes = json.loads(nodes_line)
-    edges = json.loads(edges_line)
+        text = f.read()
+
+    try:
+        nodes, edges = _parse_two_arrays(text)
+    except json.JSONDecodeError as jde:
+        raise SystemExit(f"Failed to parse graph JSON: {jde}")
 
     # Extract node ids and sort
     try:
@@ -64,7 +97,7 @@ def main():
 
     out = {
         "meta": {
-            "created": datetime.datetime.utcnow().isoformat() + "Z",
+            "created": datetime.datetime.now(datetime.timezone.utc).isoformat().replace("+00:00", "Z"),
             "method": "contiguous_by_id",
             "ranks": args.ranks,
             "nodes": n_total,

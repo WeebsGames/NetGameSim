@@ -20,23 +20,69 @@ static std::string trim(const std::string& s) {
 }
 
 GraphData load_two_line_graph_json(const std::string& path) {
-    std::ifstream is(path);
+    std::ifstream is(path, std::ios::binary);
     if (!is) throw std::runtime_error("Failed to open graph file: " + path);
 
-    std::string nodes_line; std::string edges_line;
-    std::getline(is, nodes_line);
-    std::getline(is, edges_line);
-    nodes_line = trim(nodes_line);
-    edges_line = trim(edges_line);
-    if (nodes_line.empty() || edges_line.empty()) {
-        throw std::runtime_error("Graph JSON must contain two non-empty lines: nodes then edges");
+    // Read entire file into memory (tolerate pretty-printed arrays, CRLF, BOM)
+    std::string text((std::istreambuf_iterator<char>(is)), std::istreambuf_iterator<char>());
+    if (text.empty()) {
+        throw std::runtime_error("Graph JSON is empty; expected two arrays: nodes then edges");
+    }
+    // Strip UTF-8 BOM if present
+    if (text.size() >= 3 && static_cast<unsigned char>(text[0]) == 0xEF && static_cast<unsigned char>(text[1]) == 0xBB && static_cast<unsigned char>(text[2]) == 0xBF) {
+        text.erase(0, 3);
     }
 
-    json jnodes = json::parse(nodes_line);
-    json jedges = json::parse(edges_line);
+    auto skip_ws = [](const std::string& s, size_t i){ while (i < s.size() && std::isspace(static_cast<unsigned char>(s[i]))) ++i; return i; };
+
+    auto extract_top_level_array = [&](size_t& i) -> std::string {
+        i = skip_ws(text, i);
+        if (i >= text.size() || text[i] != '[') {
+            throw std::runtime_error("Expected a top-level JSON array starting with '['");
+        }
+        std::string out;
+        out.reserve(text.size() - i);
+        int depth = 0;
+        bool in_string = false;
+        bool escape = false;
+        for (; i < text.size(); ++i) {
+            char c = text[i];
+            out.push_back(c);
+            if (in_string) {
+                if (escape) { escape = false; continue; }
+                if (c == '\\') { escape = true; continue; }
+                if (c == '"') { in_string = false; continue; }
+            } else {
+                if (c == '"') { in_string = true; continue; }
+                if (c == '[') { ++depth; }
+                else if (c == ']') { --depth; if (depth == 0) { ++i; break; } }
+            }
+        }
+        if (depth != 0) {
+            throw std::runtime_error("Unbalanced brackets while parsing top-level array in graph JSON");
+        }
+        return out;
+    };
+
+    size_t pos = 0;
+    std::string nodes_src = extract_top_level_array(pos);
+    pos = skip_ws(text, pos);
+    std::string edges_src = extract_top_level_array(pos);
+
+    json jnodes, jedges;
+    try {
+        jnodes = json::parse(nodes_src);
+    } catch (const std::exception& ex) {
+        throw std::runtime_error(std::string("Failed to parse nodes array: ") + ex.what());
+    }
+    try {
+        jedges = json::parse(edges_src);
+    } catch (const std::exception& ex) {
+        throw std::runtime_error(std::string("Failed to parse edges array: ") + ex.what());
+    }
 
     if (!jnodes.is_array() || !jedges.is_array()) {
-        throw std::runtime_error("Graph JSON lines must be arrays");
+        throw std::runtime_error("Graph JSON must contain two top-level arrays: nodes then edges");
     }
 
     GraphData gd;
