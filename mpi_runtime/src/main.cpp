@@ -157,10 +157,47 @@ int main(int argc, char** argv) {
 
     // Stubs: algorithms to be implemented next phases.
     if (args.algo == "leader") {
-        rank_log(args.logDir, world_rank, "leader", "Starting leader election (stub)");
-        // ... algorithm work to come ...
-        iterations = 0; messages = 0; bytes = 0;
-        rank_log(args.logDir, world_rank, "leader", "Finished leader election (stub)");
+        // Correctness-first leader election: global max node id via Allreduce.
+        // This achieves agreement in one iteration and provides a baseline.
+        rank_log(args.logDir, world_rank, "leader", "Starting leader election (global-max baseline)");
+        try {
+            GraphData gd = load_two_line_graph_json(args.graphPath);
+            PartitionData pd = load_partition_json(args.partPath);
+            if (pd.ranks != world_size) {
+                if (world_rank == 0) {
+                    std::cerr << "Partition ranks (" << pd.ranks << ") do not match MPI world size (" << world_size << ")" << std::endl;
+                }
+                MPI_Abort(MPI_COMM_WORLD, 3);
+            }
+            RankView rv = build_rank_view(gd, pd, world_rank, world_size);
+
+            // Local candidate = max owned node id (or -1 if none)
+            int local_max = -1;
+            for (int id : rv.owned_nodes) if (id > local_max) local_max = id;
+            // Reduce to global max across ranks
+            int global_max = -1;
+            MPI_Allreduce(&local_max, &global_max, 1, MPI_INT, MPI_MAX, MPI_COMM_WORLD);
+            messages += 1; bytes += sizeof(int);
+
+            // Agreement check (trivial here, but keep pattern)
+            int agree = (global_max >= 0) ? 1 : 0;
+            int all_agree = 0;
+            MPI_Allreduce(&agree, &all_agree, 1, MPI_INT, MPI_LAND, MPI_COMM_WORLD);
+            messages += 1; bytes += sizeof(int);
+
+            iterations = 1; // single collective step baseline
+            std::ostringstream oss;
+            oss << "Elected leader id=" << global_max << ", owned_nodes=" << rv.owned_nodes.size();
+            rank_log(args.logDir, world_rank, "leader", oss.str());
+
+            if (world_rank == 0 && args.verbose) {
+                std::cout << "[leader] Elected leader id=" << global_max << std::endl;
+            }
+        } catch (const std::exception& ex) {
+            if (world_rank == 0) std::cerr << "Leader setup failed: " << ex.what() << std::endl;
+            MPI_Abort(MPI_COMM_WORLD, 6);
+        }
+        rank_log(args.logDir, world_rank, "leader", "Finished leader election (global-max baseline)");
     } else if (args.algo == "dijkstra") {
         try {
             if (world_rank == 0) std::cout << "[dijkstra] Loading inputs..." << std::endl;

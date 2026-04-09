@@ -45,6 +45,32 @@ case class NetGraph(sm: NetStateMachine, initState: NodeObject)
      extends GraphStore with Ordered[NetGraph]:
    import NetGraph.logger
 
+   override def equals(obj: Any): Boolean =
+      obj match
+        case that: NetGraph =>
+          // Null-safe: if either side is a degenerate/mock graph, compare fields only
+          if (this.sm == null || this.initState == null || that.sm == null || that.initState == null) then
+            java.util.Objects.equals(this.sm, that.sm) && java.util.Objects.equals(this.initState, that.initState)
+          else
+            // Structural equality based on nodes, edges, and initState
+            this.initState == that.initState && this.compare(that) == 0
+        case _ => false
+
+   override def hashCode(): Int =
+      // Null-safe hash for degenerate/mock graphs
+      if (sm == null || initState == null) then java.util.Objects.hash(sm, initState)
+      else
+        val nodes = sm.nodes().asScala.toSet
+        val edges = sm.edges().asScala.toList
+        val nodesHash = nodes.map(_.hashCode()).foldLeft(0)((a, b) => 31 * a + b)
+        val edgesHash = edges.map(e => {
+          val u = e.nodeU()
+          val v = e.nodeV()
+          val ev = sm.edgeValue(u, v).get
+          31 * (31 * u.hashCode() + v.hashCode()) + ev.hashCode()
+        }).foldLeft(0)((a, b) => 31 * a + b)
+        31 * (31 * nodesHash + edgesHash) + initState.hashCode()
+
    override def compare(that: NetGraph): Int =
       import scala.collection.parallel.*
       import scala.collection.parallel.CollectionConverters.*
@@ -264,8 +290,10 @@ object NetGraph:
    val logger: Logger = CreateLogger(classOf[NetGraph])
 
    def load(fileName: String, dir: String = outputDirectory): Option[NetGraph] =
-     if(fileName.stripSuffix(".perturbed").endsWith(NGSConstants.DEFOUTFILEEXT)) then
-       logger.info(s"Loading the NetGraph from $dir$fileName")
+     val baseName = fileName.stripSuffix(".perturbed")
+     // Treat both default NGS binary files and legacy .ser files as Java-serialized binaries
+     if (baseName.endsWith(NGSConstants.DEFOUTFILEEXT) || baseName.endsWith(".ser")) then
+       logger.info(s"Loading the NetGraph (binary) from $dir$fileName")
        Try(new FileInputStream(s"$dir$fileName"))
          .map(fis => (fis, new ObjectInputStream(fis)))
          .map { (fis, ois) =>
