@@ -6,9 +6,9 @@
   "iterations": 1,
   "messages_sent": 2,
   "bytes_sent": 8,
-  "runtime_ms": 31,
-  "start_time": "2026-04-10T02:35:30.189Z",
-  "end_time": "2026-04-10T02:35:30.220Z",
+  "runtime_ms": 27,
+  "start_time": "2026-04-10T03:46:31.613Z",
+  "end_time": "2026-04-10T03:46:31.641Z",
   "seed": "",
   "result": {"leader":200},
   "args": { "rounds": 200, "source": 0, "verbose": 0 }

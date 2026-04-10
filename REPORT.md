@@ -118,12 +118,14 @@ The above creates/updates the following archived summaries:
 ### Experiment A — Seed variation (seed 556 vs 762)
 Paste the key metrics below after running the suite (all values from rank‑0 summaries):
 
+<!-- EXP_SEED_TABLE_START -->
 | algo | ranks | seed | iterations | messages_sent | bytes_sent | runtime_ms |
 |------|-------|------|------------|---------------|------------|------------|
-| leader | 10 | 556 |            |               |            |            |
-| dijkstra | 10 | 556 |            |               |            |            |
-| leader | 10 | 762 |            |               |            |            |
-| dijkstra | 10 | 762 |            |               |            |            |
+| leader | 10 | 556 | 1 | 2 | 8 | 27 |
+| dijkstra | 10 | 556 | 201 | 1680 | 40472 | 27 |
+| leader | 10 | 762 | 1 | 2 | 8 | 27 |
+| dijkstra | 10 | 762 | 201 | 1708 | 40532 | 25 |
+<!-- EXP_SEED_TABLE_END -->
 
 Notes/observations:
 - Briefly compare iterations/messages/runtime across seeds. Mention any notable histogram shape differences for Dijkstra.
@@ -131,12 +133,18 @@ Notes/observations:
 ### Experiment B — Size variation (small vs medium)
 Run with configs/small.conf and configs/medium.conf at ranks=10. Paste metrics below:
 
+<!-- EXP_SIZE_TABLE_START -->
 | algo | ranks | config | iterations | messages_sent | bytes_sent | runtime_ms |
 |------|-------|--------|------------|---------------|------------|------------|
-| leader | 10 | small  |            |               |            |            |
-| dijkstra | 10 | small  |            |               |            |            |
-| leader | 10 | medium |            |               |            |            |
-| dijkstra | 10 | medium |            |               |            |            |
+| leader | 10 | small  | 1 | 2 | 8 | 22 |
+| dijkstra | 10 | small  | 81 | 672 | 16472 | 19 |
+| leader | 10 | medium  | 1 | 2 | 8 | 117 |
+| dijkstra | 10 | medium  | 801 | 6558 | 163436 | 157 |
+<!-- EXP_SIZE_TABLE_END -->
+
+<!-- EXP_UPDATE_NOTE_START -->
+Last updated automatically at 2026-04-10T03:48:38.578387Z
+<!-- EXP_UPDATE_NOTE_END -->
 
 Notes/observations:
 - Comment on trends as the graph grows (e.g., more iterations/messages for Dijkstra, runtime impacts). Optionally reference distance_histogram changes.

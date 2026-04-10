@@ -221,6 +221,10 @@ Run a small experiment suite (WSL/Linux/macOS)
 
   bash experiments/run_experiments.sh --ranks 10
 
+After runs, populate REPORT.md experiment tables automatically:
+
+  python3 experiments/update_report_from_summaries.py
+
 Notes
 - The run_*.sh and run_*.ps1 scripts auto-detect the partition’s meta.ranks and run mpirun -n accordingly; they also add --oversubscribe to avoid slot errors on laptops/WSL.
 - You can still force a specific rank count by setting OVERRIDE_RANKS=1 and passing RANKS (or the -Ranks parameter on PowerShell), but the partition must match.
