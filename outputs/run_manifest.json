@@ -1,12 +1,12 @@
 {
   "algo": "dijkstra",
-  "ranks": 4,
+  "ranks": 10,
   "graph_path": "/mnt/e/GitHub/NetGameSim/outputs/graph.json",
   "part_path": "/mnt/e/GitHub/NetGameSim/outputs/part.json",
-  "start_time": "2026-04-09T08:00:16.646Z",
-  "end_time": "2026-04-09T08:00:16.655Z",
-  "runtime_ms": 9,
+  "start_time": "2026-04-10T02:37:07.579Z",
+  "end_time": "2026-04-10T02:37:07.711Z",
+  "runtime_ms": 132,
   "seed": "",
-  "graph_size_bytes": 293,
-  "part_size_bytes": 698
+  "graph_size_bytes": 1667458,
+  "part_size_bytes": 74315
 }

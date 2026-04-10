@@ -1,46 +1,48 @@
 param(
   [int]$Ranks = 10,
   [int]$Seed = -1,
-  [string]$Config = ".\GenericSimUtilities\src\main\resources\application.conf"
+  [string]$Config = ".\GenericSimUtilities\src\main\resources\application.conf",
+  [string]$GraphOut = ".\outputs\graph.json",
+  [string]$PartOut = ".\outputs\part.json"
 )
 
 $ErrorActionPreference = "Stop"
 
-# Resolve repository root relative to this script so it can run from any CWD
+# Resolve repository root relative to this script
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $RootDir = Split-Path -Parent $ScriptDir
 
-# Paths
-$OutDir = Join-Path $RootDir "outputs"
-$GraphOut = Join-Path $OutDir "graph.json"
-$PartOut = Join-Path $OutDir "part.json"
-$GraphExportPs1 = Join-Path $RootDir "tools/graph_export/run.ps1"
-$PartitionPy = Join-Path $RootDir "tools/partition/run.py"
-$ValidatePy = Join-Path $RootDir "tools/partition/validate.py"
-$RunLeader = Join-Path $RootDir "experiments/run_leader.ps1"
-$RunDijk = Join-Path $RootDir "experiments/run_dijkstra.ps1"
+# Normalize to absolute paths
+if (-not [System.IO.Path]::IsPathRooted($GraphOut)) { $GraphOut = Join-Path $RootDir $GraphOut }
+if (-not [System.IO.Path]::IsPathRooted($PartOut))  { $PartOut  = Join-Path $RootDir $PartOut }
+if (-not [System.IO.Path]::IsPathRooted($Config))   { $Config   = Join-Path $RootDir $Config }
 
-if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir | Out-Null }
+# Ensure outputs dirs
+$outDir = Join-Path $RootDir "outputs"
+$expDir = Join-Path $outDir "experiments"
+if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir | Out-Null }
+if (-not (Test-Path $expDir)) { New-Item -ItemType Directory -Path $expDir | Out-Null }
 
-# 1) Graph export (honor optional Seed)
+# 1) Generate graph
 if ($Seed -ge 0) {
-  Write-Host "[e2e.ps1] Exporting graph with Seed=$Seed"
-  & $GraphExportPs1 -Config $Config -OutPath $GraphOut -Seed $Seed
+  & (Join-Path $RootDir "tools/graph_export/run.ps1") -Config $Config -OutPath $GraphOut -Seed $Seed
 } else {
-  Write-Host "[e2e.ps1] Exporting graph (seed from config)"
-  & $GraphExportPs1 -Config $Config -OutPath $GraphOut
+  & (Join-Path $RootDir "tools/graph_export/run.ps1") -Config $Config -OutPath $GraphOut
 }
 
-# 2) Partition and validate
-Write-Host "[e2e.ps1] Partitioning graph with ranks=$Ranks"
-py $PartitionPy $GraphOut --ranks $Ranks --out $PartOut
-py $ValidatePy $PartOut
+# 2) Partition and validate (use 'py' by default on Windows)
+py (Join-Path $RootDir "tools/partition/run.py") $GraphOut --ranks $Ranks --out $PartOut
+py (Join-Path $RootDir "tools/partition/validate.py") $PartOut
 
-# 3) Run leader and dijkstra (wrappers auto-sync -n to partition and use --oversubscribe)
-Write-Host "[e2e.ps1] Running leader election"
-& $RunLeader -Ranks $Ranks -Graph $GraphOut -Part $PartOut
+# 3) Run leader and dijkstra (wrappers auto-sync -n to partition and add --oversubscribe)
+& (Join-Path $RootDir "experiments/run_leader.ps1")
+& (Join-Path $RootDir "experiments/run_dijkstra.ps1")
 
-Write-Host "[e2e.ps1] Running Dijkstra (source=0)"
-& $RunDijk -Ranks $Ranks -Graph $GraphOut -Part $PartOut -Source 0
+# 4) Archive summaries
+$tag = if ($Seed -ge 0) { "seed$Seed" } else { "untagged" }
+$sumLeader = Join-Path $outDir "summary_leader.json"
+$sumD = Join-Path $outDir "summary_dijkstra.json"
+if (Test-Path $sumLeader) { Copy-Item -Force $sumLeader (Join-Path $expDir "summary_leader_${tag}.json") }
+if (Test-Path $sumD)      { Copy-Item -Force $sumD      (Join-Path $expDir "summary_dijkstra_${tag}.json") }
 
-Write-Host "[e2e.ps1] Complete. Summaries at outputs/summary_leader.json and outputs/summary_dijkstra.json"
+Write-Host "[e2e.ps1] Completed. Summaries archived under outputs/experiments (if present)."

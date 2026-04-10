@@ -53,7 +53,7 @@ fi
 # Build if missing
 if [[ ! -x "$BUILD_DIR/ngs_mpi" ]]; then
   cmake -S "${ROOT_DIR}/mpi_runtime" -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Release
-  cmake --build "$BUILD_DIR" -j
+  cmake --build "$BUILD_DIR"
 fi
 
 # Run distributed Dijkstra (source defaults to 0)

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-set -euo pipefail
+# Strict mode (portable): enable -e and -u everywhere; add pipefail only if supported
+set -eu
+if (set -o pipefail) 2>/dev/null; then :; fi
 
 CONFIG="./GenericSimUtilities/src/main/resources/application.conf"
 OUT_PATH="./outputs/graph.json"
@@ -29,12 +31,42 @@ out_dir=$(dirname "$OUT_PATH")
 mkdir -p "$out_dir"
 mkdir -p ./outputs
 
-# Force JSON export from GraphStore.persist via Typesafe override; optionally set seed
-JAVA_TOOL_OPTIONS="-DNGSimulator.OutputGraphRepresentation.contentType=json"
+# Force JSON export from GraphStore.persist via Typesafe override; optionally set seed and external config file
+JAVA_TOOL_OPTIONS="-DNGSimulator.OutputGraphRepresentation.contentType=json -Dconfig.file=${CONFIG}"
 if [[ -n "${SEED}" ]]; then
   JAVA_TOOL_OPTIONS+=" -DNGSimulator.seed=${SEED}"
 fi
 export JAVA_TOOL_OPTIONS
+
+# Prefer Windows PowerShell exporter when running under WSL to avoid Java/sbt version mismatches.
+if [[ -f /proc/version ]] && grep -qi "microsoft" /proc/version && command -v powershell.exe >/dev/null 2>&1; then
+  win_out=$(wslpath -w "$OUT_PATH")
+  win_cfg=$(wslpath -w "$CONFIG")
+  echo "[graph_export] Detected WSL; delegating to PowerShell exporter via powershell.exe"
+  if [[ -n "${SEED}" ]]; then
+    powershell.exe -ExecutionPolicy Bypass -File tools\\graph_export\\run.ps1 -OutPath "$win_out" -Config "$win_cfg" -Seed "$SEED"
+  else
+    powershell.exe -ExecutionPolicy Bypass -File tools\\graph_export\\run.ps1 -OutPath "$win_out" -Config "$win_cfg"
+  fi
+  exit $?
+fi
+
+# If Java is not available in this environment (e.g., Linux without JDK),
+# and PowerShell is available, fall back to the Windows PowerShell exporter.
+if ! command -v java >/dev/null 2>&1; then
+  if command -v powershell.exe >/dev/null 2>&1; then
+    win_out=$(wslpath -w "$OUT_PATH")
+    win_cfg=$(wslpath -w "$CONFIG")
+    echo "[graph_export] java not found in this shell. Falling back to PowerShell exporter via powershell.exe"
+    if [[ -n "${SEED}" ]]; then
+      powershell.exe -ExecutionPolicy Bypass -File tools\\graph_export\\run.ps1 -OutPath "$win_out" -Config "$win_cfg" -Seed "$SEED"
+    else
+      powershell.exe -ExecutionPolicy Bypass -File tools\\graph_export\\run.ps1 -OutPath "$win_out" -Config "$win_cfg"
+    fi
+    # Exit with the PowerShell exit code
+    exit $?
+  fi
+fi
 
 echo "[graph_export] Building and running NetGameSim with config: $CONFIG (SEED=${SEED:-from-config})"
 "$SBT_CMD" clean compile run

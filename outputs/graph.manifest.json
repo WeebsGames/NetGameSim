@@ -1,0 +1,34 @@
+{
+    "graph_path":  "E:\\GitHub\\NetGameSim\\outputs\\graph.json",
+    "created":  "2026-04-09T21:36:39.1112859-05:00",
+    "sha256":  "7E5187EBDBB51C1745B8510228832B0F2F04CD3813D403A30D013EE30648F20D",
+    "seed":  {
+                 "value":  "12345\r\n",
+                 "PSPath":  "E:\\GitHub\\NetGameSim\\outputs\\graph.seed.txt",
+                 "PSParentPath":  "E:\\GitHub\\NetGameSim\\outputs",
+                 "PSChildName":  "graph.seed.txt",
+                 "PSDrive":  {
+                                 "CurrentLocation":  "GitHub\\NetGameSim",
+                                 "Name":  "E",
+                                 "Provider":  "Microsoft.PowerShell.Core\\FileSystem",
+                                 "Root":  "E:\\",
+                                 "Description":  "",
+                                 "MaximumSize":  null,
+                                 "Credential":  "System.Management.Automation.PSCredential",
+                                 "DisplayRoot":  null
+                             },
+                 "PSProvider":  {
+                                    "ImplementingType":  "Microsoft.PowerShell.Commands.FileSystemProvider",
+                                    "HelpFile":  "System.Management.Automation.dll-Help.xml",
+                                    "Name":  "FileSystem",
+                                    "PSSnapIn":  "Microsoft.PowerShell.Core",
+                                    "ModuleName":  "Microsoft.PowerShell.Core",
+                                    "Module":  null,
+                                    "Description":  "",
+                                    "Capabilities":  52,
+                                    "Home":  "C:\\Users\\areeb",
+                                    "Drives":  "C D E"
+                                },
+                 "ReadCount":  1
+             }
+}

@@ -86,3 +86,62 @@ Record results by running experiments/e2e.sh (or sbt mpiE2E) for each configurat
 ## 10. Environment
 - C++17, OpenMPI (WSL Ubuntu recommended), CMake/g++.
 - Scala/JDK + sbt to run NetGameSim.
+
+
+
+## Experiments
+
+This section documents how to reproduce the two required experiments and serves as a placeholder to paste metrics produced on your machine. All commands assume you are in the repository root.
+
+Artifacts written by the runtime and scripts:
+- Per‑rank logs: outputs/logs/<algo>_rank<r>.log
+- Per‑algorithm summaries (rank 0): outputs/summary_leader.json, outputs/summary_dijkstra.json
+- Distance histogram (Dijkstra only): present under the key distance_histogram in outputs/summary_dijkstra.json
+- Run manifest: outputs/run_manifest.json (algo, args, seed, input file sizes, timestamps)
+- Archived summaries for experiments: outputs/experiments/*.json
+
+### How to run the experiment suite (default ranks = 10)
+- WSL/Linux/macOS:
+  - bash experiments/run_experiments.sh --ranks 10
+- Windows PowerShell (run each e2e step and pass Seed):
+  - ./experiments/e2e.ps1 -Ranks 10 -Seed 556
+  - ./experiments/e2e.ps1 -Ranks 10 -Seed 762
+  - ./experiments/e2e.ps1 -Ranks 10 -Config .\configs\small.conf
+  - ./experiments/e2e.ps1 -Ranks 10 -Config .\configs\medium.conf
+
+The above creates/updates the following archived summaries:
+- outputs/experiments/summary_{leader,dijkstra}_seed556.json
+- outputs/experiments/summary_{leader,dijkstra}_seed762.json
+- outputs/experiments/summary_{leader,dijkstra}_small.json
+- outputs/experiments/summary_{leader,dijkstra}_medium.json
+
+### Experiment A — Seed variation (seed 556 vs 762)
+Paste the key metrics below after running the suite (all values from rank‑0 summaries):
+
+| algo | ranks | seed | iterations | messages_sent | bytes_sent | runtime_ms |
+|------|-------|------|------------|---------------|------------|------------|
+| leader | 10 | 556 |            |               |            |            |
+| dijkstra | 10 | 556 |            |               |            |            |
+| leader | 10 | 762 |            |               |            |            |
+| dijkstra | 10 | 762 |            |               |            |            |
+
+Notes/observations:
+- Briefly compare iterations/messages/runtime across seeds. Mention any notable histogram shape differences for Dijkstra.
+
+### Experiment B — Size variation (small vs medium)
+Run with configs/small.conf and configs/medium.conf at ranks=10. Paste metrics below:
+
+| algo | ranks | config | iterations | messages_sent | bytes_sent | runtime_ms |
+|------|-------|--------|------------|---------------|------------|------------|
+| leader | 10 | small  |            |               |            |            |
+| dijkstra | 10 | small  |            |               |            |            |
+| leader | 10 | medium |            |               |            |            |
+| dijkstra | 10 | medium |            |               |            |            |
+
+Notes/observations:
+- Comment on trends as the graph grows (e.g., more iterations/messages for Dijkstra, runtime impacts). Optionally reference distance_histogram changes.
+
+### Assumptions and validation
+- Graphs are connected and edges have nonnegative weights (required for Dijkstra correctness).
+- Partition meta.ranks must match MPI world size; scripts auto‑sync ranks to partition to avoid mismatches.
+- tests: See experiments/test_small.sh|.ps1 — they validate leader agreement, Dijkstra distances for a tiny deterministic graph, presence of distance_histogram, and include negative tests (rank mismatch, malformed input).

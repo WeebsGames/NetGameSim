@@ -200,3 +200,28 @@ The license is Apache 2.0, see LICENSE-2.0.txt.
 
 
 
+
+
+
+End-to-end runners and experiments
+=================================
+In addition to the per-step quick start, you can use the convenience scripts to run the whole pipeline and to collect experiments.
+
+End-to-end (WSL/Linux/macOS)
+- Graph → Partition → Build → Run leader and Dijkstra; archives summaries to outputs/experiments with a tag:
+
+  bash experiments/e2e.sh --seed 123 --ranks 10
+
+End-to-end (Windows PowerShell)
+
+  ./experiments/e2e.ps1 -Seed 123 -Ranks 10
+
+Run a small experiment suite (WSL/Linux/macOS)
+- Runs two seeds (556, 762) and a size comparison (configs/small.conf vs configs/medium.conf):
+
+  bash experiments/run_experiments.sh --ranks 10
+
+Notes
+- The run_*.sh and run_*.ps1 scripts auto-detect the partition’s meta.ranks and run mpirun -n accordingly; they also add --oversubscribe to avoid slot errors on laptops/WSL.
+- You can still force a specific rank count by setting OVERRIDE_RANKS=1 and passing RANKS (or the -Ranks parameter on PowerShell), but the partition must match.
+- The e2e scripts accept an explicit config path via --config (Bash) or -Config (PowerShell) if you wish to use configs/medium.conf.

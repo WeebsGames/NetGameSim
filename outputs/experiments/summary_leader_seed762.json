@@ -6,10 +6,10 @@
   "iterations": 1,
   "messages_sent": 2,
   "bytes_sent": 8,
-  "runtime_ms": 124,
-  "start_time": "2026-04-10T02:36:52.975Z",
-  "end_time": "2026-04-10T02:36:53.100Z",
+  "runtime_ms": 31,
+  "start_time": "2026-04-10T02:35:30.189Z",
+  "end_time": "2026-04-10T02:35:30.220Z",
   "seed": "",
-  "result": {"leader":800},
+  "result": {"leader":200},
   "args": { "rounds": 200, "source": 0, "verbose": 0 }
 }

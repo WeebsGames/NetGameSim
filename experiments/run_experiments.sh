@@ -1,50 +1,57 @@
 #!/usr/bin/env bash
-# Run two experiments: (A) seed variation; (B) size variation (small vs medium)
-# Usage: bash experiments/run_experiments.sh [--ranks R]
-# Results: copies summaries into outputs/experiments/ with descriptive filenames
+# Run a small set of experiments and archive summaries
+# - Seed variation: seeds 556 and 762
+# - Size variation: configs/small.conf vs configs/medium.conf
+# Usage: bash experiments/run_experiments.sh [--ranks N]
 
+# Strict mode (portable)
 set -eu
 if (set -o pipefail) 2>/dev/null; then :; fi
 
+# Resolve repository root relative to this script so it can run from any CWD
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$( cd "${SCRIPT_DIR}/.." && pwd )"
-OUT_DIR="${ROOT_DIR}/outputs"
-EXP_DIR="${OUT_DIR}/experiments"
-mkdir -p "$EXP_DIR"
 
-RANKS=10
+RANKS="10"
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --ranks) RANKS="$2"; shift 2;;
+    --ranks)
+      RANKS="$2"; shift 2;;
     -h|--help)
-      echo "Usage: $0 [--ranks R]"; exit 0;;
-    *) echo "Unknown arg: $1"; exit 1;;
+      echo "Usage: $0 [--ranks N]"; exit 0;;
+    *)
+      echo "Unknown arg: $1"; exit 1;;
   esac
 done
 
-run_and_archive() {
-  local tag="$1" # e.g., seed556 or small or medium
-  local s_leader="${OUT_DIR}/summary_leader.json"
-  local s_dijk="${OUT_DIR}/summary_dijkstra.json"
-  # Copy with tag
-  cp -f "$s_leader" "${EXP_DIR}/summary_leader_${tag}.json"
-  cp -f "$s_dijk" "${EXP_DIR}/summary_dijkstra_${tag}.json"
-}
+mkdir -p "${ROOT_DIR}/outputs/experiments"
 
-# Experiment A: seed variation (556 and 762)
-echo "[run_experiments] Seed variation @ ranks=${RANKS}: seeds 556 and 762"
-bash "${ROOT_DIR}/experiments/e2e.sh" --seed 556 --ranks "$RANKS"
-run_and_archive "seed556"
+# 1) Seed variation
+for SEED in 556 762; do
+  echo "[run_experiments] Running seed=$SEED ranks=$RANKS"
+  bash "${ROOT_DIR}/experiments/e2e.sh" --seed "$SEED" --ranks "$RANKS"
+  # rename/copy with tag (e2e also does this but we ensure presence)
+  for ALG in leader dijkstra; do
+    SRC="${ROOT_DIR}/outputs/summary_${ALG}.json"
+    DST="${ROOT_DIR}/outputs/experiments/summary_${ALG}_seed${SEED}.json"
+    if [[ -f "$SRC" ]]; then cp -f "$SRC" "$DST"; fi
+  done
+done
 
-bash "${ROOT_DIR}/experiments/e2e.sh" --seed 762 --ranks "$RANKS"
-run_and_archive "seed762"
+# 2) Size variation using provided configs (small and medium)
+for CFG in small medium; do
+  CONF_PATH="${ROOT_DIR}/configs/${CFG}.conf"
+  if [[ ! -f "$CONF_PATH" ]]; then
+    echo "[run_experiments] WARNING: missing $CONF_PATH; skipping $CFG" >&2
+    continue
+  fi
+  echo "[run_experiments] Running config=$CFG ranks=$RANKS"
+  bash "${ROOT_DIR}/experiments/e2e.sh" --config "$CONF_PATH" --ranks "$RANKS"
+  for ALG in leader dijkstra; do
+    SRC="${ROOT_DIR}/outputs/summary_${ALG}.json"
+    DST="${ROOT_DIR}/outputs/experiments/summary_${ALG}_${CFG}.json"
+    if [[ -f "$SRC" ]]; then cp -f "$SRC" "$DST"; fi
+  done
+done
 
-echo "[run_experiments] Size variation @ ranks=${RANKS}: small vs medium configs"
-# Experiment B: size variation using provided configs
-bash "${ROOT_DIR}/experiments/e2e.sh" --ranks "$RANKS" --config "${ROOT_DIR}/configs/small.conf"
-run_and_archive "small"
-
-bash "${ROOT_DIR}/experiments/e2e.sh" --ranks "$RANKS" --config "${ROOT_DIR}/configs/medium.conf"
-run_and_archive "medium"
-
-echo "[run_experiments] Done. See ${EXP_DIR}/ for archived summaries."
+echo "[run_experiments] All experiments attempted. See outputs/experiments for archived summaries."

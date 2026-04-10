@@ -1,55 +1,60 @@
 #!/usr/bin/env bash
-# End-to-end runner: generate graph -> partition -> build -> run leader & dijkstra
-# Usage:
-#   bash experiments/e2e.sh [--seed N] [--ranks R] [--config <path>]
-# Notes:
-# - Uses tools/graph_export/run.sh (sbt) to generate two-array JSON graph.
-# - Uses tools/partition/run.py to create outputs/part.json.
-# - Uses experiments/run_leader.sh and run_dijkstra.sh which auto-sync -n to partition and add --oversubscribe.
+# End-to-end runner: generate graph -> partition -> build -> run leader + dijkstra
+# Usage examples:
+#   bash experiments/e2e.sh --seed 123 --ranks 10
+#   bash experiments/e2e.sh --config ./GenericSimUtilities/src/main/resources/application.conf --ranks 10
 
+# Strict mode (portable)
 set -eu
 if (set -o pipefail) 2>/dev/null; then :; fi
 
+# Resolve repository root relative to this script so it can run from any CWD
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 ROOT_DIR="$( cd "${SCRIPT_DIR}/.." && pwd )"
 
 SEED=""
-RANKS=10
+RANKS="10"
 CONFIG="${ROOT_DIR}/GenericSimUtilities/src/main/resources/application.conf"
+GRAPH_OUT="${ROOT_DIR}/outputs/graph.json"
+PART_OUT="${ROOT_DIR}/outputs/part.json"
 
+# Parse args
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --seed) SEED="$2"; shift 2;;
-    --ranks) RANKS="$2"; shift 2;;
-    --config) CONFIG="$2"; shift 2;;
+    --seed)
+      SEED="$2"; shift 2;;
+    --ranks)
+      RANKS="$2"; shift 2;;
+    --config)
+      CONFIG="$2"; shift 2;;
     -h|--help)
-      echo "Usage: $0 [--seed N] [--ranks R] [--config <path>]"; exit 0;;
-    *) echo "Unknown arg: $1"; exit 1;;
+      echo "Usage: $0 [--seed N] [--ranks N] [--config <application.conf>]"; exit 0;;
+    *)
+      echo "Unknown arg: $1"; exit 1;;
   esac
 done
 
-OUT_DIR="${ROOT_DIR}/outputs"
-mkdir -p "$OUT_DIR"
+mkdir -p "${ROOT_DIR}/outputs" "${ROOT_DIR}/outputs/experiments"
 
-# 1) Graph export
-if [[ -n "$SEED" ]]; then
-  echo "[e2e] Exporting graph with seed=$SEED"
-  bash "${ROOT_DIR}/tools/graph_export/run.sh" --config "$CONFIG" --out "${OUT_DIR}/graph.json" --seed "$SEED"
+# 1) Generate graph (two-array JSON)
+if [[ -n "${SEED}" ]]; then
+  bash "${ROOT_DIR}/tools/graph_export/run.sh" --config "$CONFIG" --out "$GRAPH_OUT" --seed "$SEED"
 else
-  echo "[e2e] Exporting graph (seed from config)"
-  bash "${ROOT_DIR}/tools/graph_export/run.sh" --config "$CONFIG" --out "${OUT_DIR}/graph.json"
+  bash "${ROOT_DIR}/tools/graph_export/run.sh" --config "$CONFIG" --out "$GRAPH_OUT"
 fi
 
-# 2) Partition
-echo "[e2e] Partitioning graph with ranks=$RANKS"
-python3 "${ROOT_DIR}/tools/partition/run.py" "${OUT_DIR}/graph.json" --ranks "$RANKS" --out "${OUT_DIR}/part.json"
-python3 "${ROOT_DIR}/tools/partition/validate.py" "${OUT_DIR}/part.json"
+# 2) Partition using requested ranks
+python3 "${ROOT_DIR}/tools/partition/run.py" "$GRAPH_OUT" --ranks "$RANKS" --out "$PART_OUT"
+python3 "${ROOT_DIR}/tools/partition/validate.py" "$PART_OUT"
 
-# 3) Run leader and dijkstra (scripts will build if needed and auto-match -n to partition)
- echo "[e2e] Running leader election"
+# 3) Run leader and dijkstra (scripts auto-match -n to partition and add --oversubscribe)
 bash "${ROOT_DIR}/experiments/run_leader.sh"
-
-echo "[e2e] Running Dijkstra (source=0)"
 bash "${ROOT_DIR}/experiments/run_dijkstra.sh"
 
-echo "[e2e] Complete. Summaries in outputs/: summary_leader.json, summary_dijkstra.json"
+# 4) Archive summaries with a tag
+TAG="seed${SEED}"
+if [[ -z "${SEED}" ]]; then TAG="untagged"; fi
+cp -f "${ROOT_DIR}/outputs/summary_leader.json"    "${ROOT_DIR}/outputs/experiments/summary_leader_${TAG}.json" 2>/dev/null || true
+cp -f "${ROOT_DIR}/outputs/summary_dijkstra.json"  "${ROOT_DIR}/outputs/experiments/summary_dijkstra_${TAG}.json" 2>/dev/null || true
+
+echo "[e2e] Completed. Summaries in outputs/ and archived (if present) under outputs/experiments/."

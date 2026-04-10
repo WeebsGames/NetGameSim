@@ -11,9 +11,10 @@ if (-not (Test-Path $outDir)) { New-Item -ItemType Directory -Path $outDir | Out
 if (-not (Test-Path ".\outputs")) { New-Item -ItemType Directory -Path ".\outputs" | Out-Null }
 
 # Force NetGameSim to emit JSON from GraphStore.persist by overriding Typesafe config
-$javaOpts = "-DNGSimulator.OutputGraphRepresentation.contentType=json"
+# Also point Typesafe to the provided external config file.
+$javaOpts = "-DNGSimulator.OutputGraphRepresentation.contentType=json -Dconfig.file=$Config"
 if ($Seed -ge 0) { $javaOpts = "$javaOpts -DNGSimulator.seed=$Seed" }
-$env"JAVA_TOOL_OPTIONS" = $javaOpts
+$env:JAVA_TOOL_OPTIONS = $javaOpts
 
 # Build and run Main to generate a graph and persist it using current config
 Write-Host "Building and running NetGameSim with config: $Config"
