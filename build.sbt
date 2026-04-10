@@ -99,3 +99,72 @@ ThisBuild / assemblyMergeStrategy := {
   case "reference.conf" => MergeStrategy.concat
   case _ => MergeStrategy.first
 }
+
+// -----------------------------
+// Custom sbt task: mpiE2E
+// Runs the end-to-end pipeline: generate graph -> partition -> build MPI runtime -> run leader and dijkstra
+// Usage:
+//   sbt mpiE2E
+// Optional environment overrides:
+//   RANKS=<n>   # default 10
+//   SEED=<n>    # optional seed for graph generation
+// On Windows it uses PowerShell scripts. On Linux/WSL/macOS it uses Bash/Python.
+// -----------------------------
+import scala.sys.process._
+
+lazy val mpiE2E = taskKey[Unit]("Run end-to-end: graph export, partition, build MPI, run leader & dijkstra")
+
+ThisBuild / mpiE2E := {
+  val log = streams.value.log
+  val root = (ThisBuild / baseDirectory).value
+  val os = System.getProperty("os.name").toLowerCase
+
+  val ranksEnv = sys.env.getOrElse("RANKS", "10")
+  val seedEnv  = sys.env.get("SEED")
+
+  val outputsDir = new java.io.File(root, "outputs"); outputsDir.mkdirs()
+  val graphOut = new java.io.File(outputsDir, "graph.json").getAbsolutePath
+  val partOut  = new java.io.File(outputsDir, "part.json").getAbsolutePath
+
+  def runP(cmd: Seq[String]): Int = Process(cmd, root) ! log
+
+  if (os.contains("win")) {
+    val pwsh = sys.env.getOrElse("POWERSHELL", "powershell")
+    // Graph export via PowerShell script, with optional seed
+    val graphArgs = seedEnv match {
+      case Some(s) if s.nonEmpty => Seq(pwsh, "-ExecutionPolicy", "Bypass", "-File", new java.io.File(root, "tools/graph_export/run.ps1").getPath, "-OutPath", graphOut, "-Seed", s)
+      case _ => Seq(pwsh, "-ExecutionPolicy", "Bypass", "-File", new java.io.File(root, "tools/graph_export/run.ps1").getPath, "-OutPath", graphOut)
+    }
+    if (runP(graphArgs) != 0) sys.error("Graph export failed")
+
+    // Partition via python (prefer 'py' launcher on Windows)
+    val py = sys.env.getOrElse("PYTHON", "py")
+    if (runP(Seq(py, new java.io.File(root, "tools/partition/run.py").getPath, graphOut, "--ranks", ranksEnv, "--out", partOut)) != 0)
+      sys.error("Partitioning failed")
+
+    // Build and run leader/dijkstra via PS wrappers (they already auto-sync ranks to partition and oversubscribe)
+    if (runP(Seq(pwsh, "-ExecutionPolicy", "Bypass", "-File", new java.io.File(root, "experiments/run_leader.ps1").getPath)) != 0)
+      sys.error("Leader run failed")
+    if (runP(Seq(pwsh, "-ExecutionPolicy", "Bypass", "-File", new java.io.File(root, "experiments/run_dijkstra.ps1").getPath)) != 0)
+      sys.error("Dijkstra run failed")
+  } else {
+    // Graph export via Bash
+    val graphArgs = seedEnv match {
+      case Some(s) if s.nonEmpty => Seq("bash", new java.io.File(root, "tools/graph_export/run.sh").getPath, "--out", graphOut, "--seed", s)
+      case _ => Seq("bash", new java.io.File(root, "tools/graph_export/run.sh").getPath, "--out", graphOut)
+    }
+    if (runP(graphArgs) != 0) sys.error("Graph export failed")
+
+    // Partition via python3
+    if (runP(Seq("python3", new java.io.File(root, "tools/partition/run.py").getPath, graphOut, "--ranks", ranksEnv, "--out", partOut)) != 0)
+      sys.error("Partitioning failed")
+
+    // Build+run via Bash wrappers (auto rank sync & oversubscribe already present)
+    if (runP(Seq("bash", new java.io.File(root, "experiments/run_leader.sh").getPath)) != 0)
+      sys.error("Leader run failed")
+    if (runP(Seq("bash", new java.io.File(root, "experiments/run_dijkstra.sh").getPath)) != 0)
+      sys.error("Dijkstra run failed")
+  }
+
+  log.info("mpiE2E completed. See outputs/ for logs and summary JSON files.")
+}

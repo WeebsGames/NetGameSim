@@ -72,8 +72,8 @@ if ($leader -ne 5) {
 }
 "[test_small.ps1] Leader test passed (leader=$leader)" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
 
-# 5) Run Dijkstra (placeholder until algorithm complete). Ensure summary exists.
-mpirun -n $Ranks $exe `
+# 5) Run Dijkstra and validate distances + histogram
+mpirun --oversubscribe -n $Ranks $exe `
   --graph $GraphOut `
   --part $PartOut `
   --algo dijkstra `
@@ -85,6 +85,85 @@ if (-not (Test-Path $summaryD)) {
   "[test_small.ps1] ERROR: summary_dijkstra.json not found" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
   exit 4
 }
-"[test_small.ps1] Dijkstra placeholder run completed; summary present." | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
+# Parse JSON and validate expected distances from source 0
+$data = Get-Content $summaryD -Raw | ConvertFrom-Json
+$dm = $data.result.dist_map
+$exp = @{ "0"=0.0; "1"=2.0; "2"=4.0; "3"=1.0; "4"=3.0; "5"=5.0 }
+foreach ($k in $exp.Keys) {
+  if (-not $dm.ContainsKey($k)) {
+    "[test_small.ps1] ERROR: missing distance for node $k" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
+    exit 4
+  }
+  $dv = [double]$dm.$k
+  if ([math]::Abs($dv - [double]$exp[$k]) -gt 1e-6) {
+    "[test_small.ps1] ERROR: distance mismatch for node $k: got $dv expected $($exp[$k])" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
+    exit 4
+  }
+}
+if ($null -eq $data.distance_histogram) {
+  "[test_small.ps1] ERROR: missing distance_histogram in summary_dijkstra.json" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
+  exit 4
+}
+"[test_small.ps1] Dijkstra distances and histogram validated" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
+
+# 6) Repeat with single-line tiny_graph.json to exercise loader robustness
+$single = Join-Path $RootDir "tools/partition/testdata/tiny_graph.json"
+Copy-Item -Force $single $GraphOut
+py $partition $GraphOut --ranks $Ranks --out $PartOut
+py $validate $PartOut
+mpirun --oversubscribe -n $Ranks $exe `
+  --graph $GraphOut `
+  --part $PartOut `
+  --algo dijkstra `
+  --source 0 `
+  --log $outDir/
+$data = Get-Content $summaryD -Raw | ConvertFrom-Json
+$dm = $data.result.dist_map
+foreach ($k in $exp.Keys) {
+  $dv = [double]$dm.$k
+  if ([math]::Abs($dv - [double]$exp[$k]) -gt 1e-6) {
+    "[test_small.ps1] ERROR: single-line loader distance mismatch for node $k: got $dv expected $($exp[$k])" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
+    exit 4
+  }
+}
+"[test_small.ps1] Single-line loader robustness validated" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
+
+# 7) Negative test: rank mismatch (partition says $Ranks, run with 3) should fail
+$rc = 0
+try {
+  mpirun --oversubscribe -n 3 $exe `
+    --graph $GraphOut `
+    --part $PartOut `
+    --algo leader `
+    --rounds 10 `
+    --log $outDir/
+  $rc = $LASTEXITCODE
+} catch { $rc = 1 }
+if ($rc -eq 0) {
+  "[test_small.ps1] ERROR: expected rank mismatch failure (rc should be non-zero)" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
+  exit 5
+} else {
+  "[test_small.ps1] Rank mismatch negative test passed (rc=$rc)" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
+}
+
+# 8) Negative test: malformed graph (only one array) should fail to load
+$badGraph = Join-Path $outDir "graph_bad.json"
+(Get-Content $single -TotalCount 1) | Set-Content $badGraph
+$rc2 = 0
+try {
+  mpirun --oversubscribe -n $Ranks $exe `
+    --graph $badGraph `
+    --part $PartOut `
+    --algo leader `
+    --rounds 10 `
+    --log $outDir/
+  $rc2 = $LASTEXITCODE
+} catch { $rc2 = 1 }
+if ($rc2 -eq 0) {
+  "[test_small.ps1] ERROR: expected malformed-graph failure (rc should be non-zero)" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
+  exit 6
+} else {
+  "[test_small.ps1] Malformed-graph negative test passed (rc=$rc2)" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null
+}
 
 "[test_small.ps1] ALL CHECKS PASSED" | Tee-Object -FilePath (Join-Path $testsDir "test_small_ps1.log") -Append | Out-Null

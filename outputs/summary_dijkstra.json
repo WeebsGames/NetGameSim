@@ -4,11 +4,13 @@
   "graph_path": "/mnt/e/GitHub/NetGameSim/outputs/graph.json",
   "part_path": "/mnt/e/GitHub/NetGameSim/outputs/part.json",
   "iterations": 6,
-  "messages_sent": 56,
-  "bytes_sent": 644,
-  "runtime_ms": 8,
-  "start_time": "2026-04-09T07:21:55.395Z",
-  "end_time": "2026-04-09T07:21:55.404Z",
+  "messages_sent": 57,
+  "bytes_sent": 692,
+  "runtime_ms": 9,
+  "start_time": "2026-04-09T08:00:16.646Z",
+  "end_time": "2026-04-09T08:00:16.655Z",
   "seed": "",
+  "result": {"source":0,"dist_map":{"0":0,"1":2,"2":4,"3":1,"4":3,"5":5}},
+  "distance_histogram": {"bins":[{"le":0.5,"count":1},{"le":1,"count":0},{"le":1.5,"count":1},{"le":2,"count":0},{"le":2.5,"count":1},{"le":3,"count":0},{"le":3.5,"count":1},{"le":4,"count":0},{"le":4.5,"count":1},{"le":5,"count":1}],"min":0,"max":5,"total":6,"bucket_scheme":"fixed_width","bucket_count":10},
   "args": { "rounds": 0, "source": 0, "verbose": 0 }
 }

@@ -67,6 +67,62 @@ Configuration
 ========
 All NetGameSim's configuration options are defined in [application.conf] under ```GenericSimUtilities/src/main/resources/application.conf``` where configuration option file for logging ```logback.xml``` is also located. Users can provide their own external ```application.conf``` to execute ```netmodelsim.jar``` from command line by using the JVM option ```-D``` as in [-Dconfig.file=path/to/config-file](https://github.com/lightbend/config).
 
+MPI runtime, scripts, and end‑to‑end usage
+=========================================
+This repository now contains a C++17 MPI runtime (OpenMPI preferred via WSL on Windows) that loads two‑array JSON graphs and a partition, then runs:
+- Leader election (baseline: global max id agreement)
+- Distributed Dijkstra (global‑minimum selection per iteration)
+
+Outputs written under outputs/ include per‑rank logs, per‑algorithm summary JSON (with iterations, messages_sent, bytes_sent, runtime_ms, timestamps, seed, and for Dijkstra a distance_histogram), and a run_manifest.json for reproducibility.
+
+Prerequisites
+- Java/JDK + sbt (for NetGameSim)
+- Python 3 (partition tool)
+- CMake, g++, OpenMPI (on Windows, use WSL Ubuntu + openmpi-bin libopenmpi-dev)
+
+Quick start (WSL/Linux/macOS)
+1) Generate a graph as two‑array JSON (line 1 = nodes, line 2 = edges), partition, build, and run both algorithms using scripts:
+
+  bash tools/graph_export/run.sh --out ./outputs/graph.json --seed 123
+  python3 tools/partition/run.py ./outputs/graph.json --ranks 10 --out ./outputs/part.json
+  bash experiments/run_leader.sh
+  bash experiments/run_dijkstra.sh  # defaults to --source 0
+
+Notes:
+- The run_*.sh scripts auto‑detect the partition’s meta.ranks and run mpirun -n accordingly, and add --oversubscribe.
+- If you switch between Windows and WSL runs, the scripts maintain a separate build directory (build_wsl) and clean stale CMake caches.
+
+Quick start (Windows PowerShell)
+  ./tools/graph_export/run.ps1 -OutPath .\outputs\graph.json -Seed 123
+  py tools/partition/run.py .\outputs\graph.json --ranks 10 --out .\outputs\part.json
+  ./experiments/run_leader.ps1
+  ./experiments/run_dijkstra.ps1  # defaults to --source 0
+
+All‑in‑one sbt task
+You can kick off the entire pipeline from sbt (OS‑aware, uses the scripts above):
+
+  sbt mpiE2E
+
+Optional environment overrides:
+- SEED=<n> to fix the generation seed
+- RANKS=<n> to request a partition size (scripts still auto‑match mpirun to meta.ranks)
+
+Reproducibility
+- The graph export scripts persist the chosen seed to outputs/graph.seed.txt and a manifest outputs/graph.manifest.json with SHA‑256.
+- The MPI runtime writes outputs/run_manifest.json per run (algo, ranks, args, seed, input file sizes, timestamps).
+- The per‑algorithm summaries include the seed as well.
+
+Testing (tiny deterministic graph)
+Run a small cross‑platform test that validates leader agreement, Dijkstra distances from source 0, histogram presence, and negative cases (rank mismatch and malformed input):
+
+  bash experiments/test_small.sh      # WSL/Linux/macOS
+  ./experiments/test_small.ps1        # Windows PowerShell
+
+Troubleshooting
+- Slot errors: add --oversubscribe (the scripts already do this) or define a hostfile with slots=N.
+- Rank mismatch: regenerate a matching partition using tools/partition/run.py or let scripts auto‑match -n to meta.ranks.
+- Path cache errors in CMake when switching OS: the scripts auto‑clean incompatible build directories.
+
 Below if an example of the configuration file that contains the main configuration entry, ***NGSimulator*** that in turn contains two parameters and three configuration subentries.
 
 ```hocon
