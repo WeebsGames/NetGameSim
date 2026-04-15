@@ -10,14 +10,6 @@
 
 using nlohmann::json;
 
-static std::string trim(const std::string& s) {
-    auto b = s.begin();
-    while (b != s.end() && std::isspace(static_cast<unsigned char>(*b))) ++b;
-    auto e = s.end();
-    do { if (e==s.begin()) break; --e; } while (std::isspace(static_cast<unsigned char>(*e)) && e!=s.begin());
-    if (b==s.end()) return "";
-    return std::string(b, e+1);
-}
 
 GraphData load_two_line_graph_json(const std::string& path) {
     std::ifstream is(path, std::ios::binary);

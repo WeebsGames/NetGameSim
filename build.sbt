@@ -128,25 +128,79 @@ ThisBuild / mpiE2E := {
 
   def runP(cmd: Seq[String]): Int = Process(cmd, root) ! log
 
+  // Precompute task values outside of conditionals to satisfy sbt task linting
+  val _ = (Compile / compile).value // ensure classes are compiled if needed later
+  val cpEntries = (Compile / fullClasspath).value.map(_.data)
+
   if (os.contains("win")) {
     val pwsh = sys.env.getOrElse("POWERSHELL", "powershell")
-    // Graph export via PowerShell script, with optional seed
-    val graphArgs = seedEnv match {
-      case Some(s) if s.nonEmpty => Seq(pwsh, "-ExecutionPolicy", "Bypass", "-File", new java.io.File(root, "tools/graph_export/run.ps1").getPath, "-OutPath", graphOut, "-Seed", s)
-      case _ => Seq(pwsh, "-ExecutionPolicy", "Bypass", "-File", new java.io.File(root, "tools/graph_export/run.ps1").getPath, "-OutPath", graphOut)
+    log.info("[mpiE2E] Generating graph via direct Java invocation (avoid nested sbt)")
+    val configPath = new java.io.File(root, "GenericSimUtilities/src/main/resources/application.conf").getAbsolutePath
+    val cpSep = java.io.File.pathSeparator
+    val cpStr = cpEntries.map(_.getAbsolutePath).mkString(cpSep)
+    val javaExe = sys.props.getOrElse("JAVA_EXE", {
+      val jh = System.getProperty("java.home", "")
+      val cand = if (jh.nonEmpty) new java.io.File(jh, "bin/java.exe") else new java.io.File("java")
+      cand.getAbsolutePath
+    })
+    val sysProps = seedEnv match {
+      case Some(s) if s.nonEmpty => Seq("-DNGSimulator.OutputGraphRepresentation.contentType=json", s"-Dconfig.file=${configPath}", s"-DNGSimulator.seed=${s}")
+      case _ => Seq("-DNGSimulator.OutputGraphRepresentation.contentType=json", s"-Dconfig.file=${configPath}")
     }
-    if (runP(graphArgs) != 0) sys.error("Graph export failed")
+    val javaCmd = Seq(javaExe) ++ sysProps ++ Seq("-cp", cpStr, "com.lsc.Main")
+    val runRc = Process(javaCmd, root) ! log
+    if (runRc != 0) sys.error("Graph export (Java run) failed")
+
+    // Copy latest generated NetGraph_*.ngs from ./output to requested graphOut
+    val outDir = new java.io.File(root, "output")
+    val latestOpt: Option[java.io.File] = Option(outDir.listFiles()).toList.flatten
+      .filter(f => f.getName.startsWith("NetGraph_") && f.getName.endsWith(".ngs"))
+      .sortBy(_.lastModified())
+      .lastOption
+    latestOpt match {
+      case Some(src) =>
+        log.info(s"[mpiE2E] Using generated graph: ${src.getAbsolutePath}")
+        val dest = new java.io.File(graphOut)
+        dest.getParentFile.mkdirs()
+        java.nio.file.Files.copy(src.toPath, dest.toPath, java.nio.file.StandardCopyOption.REPLACE_EXISTING)
+      case None => sys.error("No generated NetGraph_*.ngs file found in ./output after Java run")
+    }
 
     // Partition via python (prefer 'py' launcher on Windows)
     val py = sys.env.getOrElse("PYTHON", "py")
     if (runP(Seq(py, new java.io.File(root, "tools/partition/run.py").getPath, graphOut, "--ranks", ranksEnv, "--out", partOut)) != 0)
       sys.error("Partitioning failed")
 
-    // Build and run leader/dijkstra via PS wrappers (they already auto-sync ranks to partition and oversubscribe)
-    if (runP(Seq(pwsh, "-ExecutionPolicy", "Bypass", "-File", new java.io.File(root, "experiments/run_leader.ps1").getPath)) != 0)
-      sys.error("Leader run failed")
-    if (runP(Seq(pwsh, "-ExecutionPolicy", "Bypass", "-File", new java.io.File(root, "experiments/run_dijkstra.ps1").getPath)) != 0)
-      sys.error("Dijkstra run failed")
+    // Detect native Windows MPI tools; if missing, fallback to WSL to run MPI steps
+    def cmdExists(cmd: String): Boolean = {
+      try { Process(Seq("where", cmd), root).!(ProcessLogger(_ => ())) == 0 } catch { case _: Throwable => false }
+    }
+    val forceWsl = sys.env.get("USE_WSL").exists(_.nonEmpty)
+    val hasMpirun = cmdExists("mpirun")
+    val hasMpicxx = cmdExists("mpicxx")
+
+    if (forceWsl || !hasMpirun || !hasMpicxx) {
+      log.warn("[mpiE2E] mpirun/mpicxx not found on Windows PATH (or USE_WSL set). Running MPI steps under WSL...")
+      // Convert Windows path (e.g., E:\repo) to WSL (/mnt/e/repo)
+      val abs = root.getAbsolutePath
+      val drive = abs.substring(0,1).toLowerCase
+      val rest = abs.substring(2).replace('\\','/')
+      val wslRoot = s"/mnt/${drive}${rest}"
+      val wsl = sys.env.getOrElse("WSL_EXE", "wsl.exe")
+      // Run only the MPI steps under WSL to avoid invoking sbt again via WSL scripts
+      val cmdLeader = s"cd ${wslRoot}; bash experiments/run_leader.sh"
+      val rcLeader = Process(Seq(wsl, "bash", "-lc", cmdLeader), root) ! log
+      if (rcLeader != 0) sys.error("WSL leader run failed")
+      val cmdDij = s"cd ${wslRoot}; bash experiments/run_dijkstra.sh"
+      val rcDij = Process(Seq(wsl, "bash", "-lc", cmdDij), root) ! log
+      if (rcDij != 0) sys.error("WSL dijkstra run failed")
+    } else {
+      // Build and run leader/dijkstra via PS wrappers (they already auto-sync ranks to partition and oversubscribe)
+      if (runP(Seq(pwsh, "-ExecutionPolicy", "Bypass", "-File", new java.io.File(root, "experiments/run_leader.ps1").getPath)) != 0)
+        sys.error("Leader run failed")
+      if (runP(Seq(pwsh, "-ExecutionPolicy", "Bypass", "-File", new java.io.File(root, "experiments/run_dijkstra.ps1").getPath)) != 0)
+        sys.error("Dijkstra run failed")
+    }
   } else {
     // Graph export via Bash
     val graphArgs = seedEnv match {

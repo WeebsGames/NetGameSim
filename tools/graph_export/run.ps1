@@ -16,9 +16,16 @@ $javaOpts = "-DNGSimulator.OutputGraphRepresentation.contentType=json -Dconfig.f
 if ($Seed -ge 0) { $javaOpts = "$javaOpts -DNGSimulator.seed=$Seed" }
 $env:JAVA_TOOL_OPTIONS = $javaOpts
 
+# Harden sbt invocation to avoid named pipe server conflicts on Windows
+# Use --no-server to disable the sbt server; also disable native client and autostart.
+$env:SBT_OPTS = "-Dsbt.server.autostart=false"
+$env:SBT_NATIVE_CLIENT = "false"
+
 # Build and run Main to generate a graph and persist it using current config
 Write-Host "Building and running NetGameSim with config: $Config"
-$proc = Start-Process -FilePath $SbtCmd -ArgumentList "clean","compile","run" -NoNewWindow -PassThru -Wait
+# Use --no-server and --batch to avoid Windows named pipe server conflicts.
+# NOTE: We rely on SBT_OPTS to disable the server; passing -J system props here can be mis-parsed in batch mode.
+$proc = Start-Process -FilePath $SbtCmd -ArgumentList "--no-server","--batch","clean","compile","run" -NoNewWindow -PassThru -Wait
 if ($proc.ExitCode -ne 0) { throw "sbt run failed with exit code $($proc.ExitCode)" }
 
 # After run, identify the most recent generated file in ./output with two-line JSON
